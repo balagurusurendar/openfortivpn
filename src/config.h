@@ -80,7 +80,7 @@ struct x509_digest {
  *
  * We believe we are on the safe side using this value.
  */
-#define MAX_DOMAIN_LENGTH 256
+#define MAX_DOMAIN_LENGTH 350
 
 struct vpn_config {
 	char		gateway_host[GATEWAY_HOST_SIZE + 1];
@@ -103,6 +103,9 @@ struct vpn_config {
 	int	use_syslog;
 #if HAVE_RESOLVCONF
 	int	use_resolvconf;
+#endif
+#if HAVE_SYSTEMD_RESOLVE
+	int use_systemd_resolve;
 #endif
 	int	half_internet_routes;
 
