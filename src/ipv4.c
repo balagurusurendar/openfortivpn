@@ -1068,11 +1068,18 @@ int ipv4_add_nameservers_to_resolv_conf(struct tunnel *tunnel)
 #define NS_SIZE ARRAY_SIZE("nameserver xxx.xxx.xxx.xxx\n")
 	char ns1[NS_SIZE], ns2[NS_SIZE];
 #undef NS_SIZE
+#define NS_VALUE_SIZE ARRAY_SIZE("--set-dns=xxx.xxx.xxx.xxx --set-dns=xxx.xxx.xxx.xxx")
+	char ns_value[NS_VALUE_SIZE];
+#undef NS_VALUE_SIZE
 #define DNS_SUFFIX_SIZE (ARRAY_SIZE("search \n") + MAX_DOMAIN_LENGTH)
 	char dns_suffix[DNS_SUFFIX_SIZE];
 #undef DNS_SUFFIX_SIZE
+#define DNS_SUFFIX_VALUE_SIZE (ARRAY_SIZE("--set-domain= \n") + MAX_DOMAIN_LENGTH)
+	char *dns_suffix_value = NULL;
+#undef DNS_SUFFIX_VALUE_SIZE
 	char *buffer = NULL;
-#if HAVE_RESOLVCONF
+#if HAVE_SYSTEMD_RESOLVE || HAVE_RESOLVCONF
+	int use_systemd_resolve = 0;
 	int use_resolvconf = 0;
 #endif
 
@@ -1086,7 +1093,12 @@ int ipv4_add_nameservers_to_resolv_conf(struct tunnel *tunnel)
 	if (tunnel->ipv4.ns2_addr.s_addr == 0)
 		tunnel->ipv4.ns2_was_there = -1;
 
-#if HAVE_RESOLVCONF
+#if HAVE_SYSTEMD_RESOLVE
+	if (tunnel->config->use_systemd_resolve
+	    && (access(SYSTEMD_RESOLV_PATH, F_OK) == 0)) {
+		use_systemd_resolve = 1;
+	} else {
+#elif HAVE_RESOLVCONF
 	if (tunnel->config->use_resolvconf
 	    && (access(RESOLVCONF_PATH, F_OK) == 0)) {
 		int resolvconf_call_len;
@@ -1154,9 +1166,28 @@ int ipv4_add_nameservers_to_resolv_conf(struct tunnel *tunnel)
 		}
 
 		buffer[stat.st_size] = '\0';
-#if HAVE_RESOLVCONF
+#if HAVE_RESOLVCONF || HAVE_SYSTEMD_RESOLVE
 	}
 #endif
+#if HAVE_SYSTEMD_RESOLVE
+	if (tunnel->ipv4.ns1_addr.s_addr != 0) {
+		strcpy(ns_value, "--set-dns=");
+		strncat(ns_value, inet_ntoa(tunnel->ipv4.ns1_addr), 15);
+		strcat(ns_value, ' ');
+	}
+
+	if (tunnel->ipv4.ns2_addr.s_addr != 0) {
+		strcat(ns_value, "--set-dns=");
+		strncat(ns_value, inet_ntoa(tunnel->ipv4.ns2_addr), 15);
+	}
+
+	if (tunnel->ipv4.dns_suffix != NULL) {
+		strcpy(dns_suffix_value, "--set-domain=");
+		strncat(dns_suffix_value, tunnel->ipv4.dns_suffix, MAX_DOMAIN_LENGTH);
+		replace_char(dns_suffix_value, ';', ' --set-domain=');
+	}
+
+#else
 	if (tunnel->ipv4.ns1_addr.s_addr != 0) {
 		strcpy(ns1, "nameserver ");
 		strncat(ns1, inet_ntoa(tunnel->ipv4.ns1_addr), 15);
@@ -1178,9 +1209,10 @@ int ipv4_add_nameservers_to_resolv_conf(struct tunnel *tunnel)
 	} else {
 		dns_suffix[0] = '\0';
 	}
+#endif
 
-#if HAVE_RESOLVCONF
-	if (use_resolvconf == 0) {
+#if HAVE_RESOLVCONF || HAVE_SYSTEMD_RESOLVE
+	if (use_resolvconf == 0 && use_systemd_resolve == 0) {
 #endif
 		char *saveptr = NULL;
 
@@ -1234,23 +1266,40 @@ int ipv4_add_nameservers_to_resolv_conf(struct tunnel *tunnel)
 		buffer[stat.st_size] = '\0';
 
 		rewind(file);
-#if HAVE_RESOLVCONF
+#if HAVE_RESOLVCONF || HAVE_SYSTEMD_RESOLVE
 	}
 #endif
-	if (tunnel->ipv4.ns1_was_there == 0) {
-		strcat(ns1, "\n");
-		fputs(ns1, file);
+#if HAVE_SYSTEMD_RESOLVE
+	if(use_systemd_resolve == 0){
+#endif
+		if (tunnel->ipv4.ns1_was_there == 0) {
+			strcat(ns1, "\n");
+			fputs(ns1, file);
+		}
+		if (tunnel->ipv4.ns2_was_there == 0) {
+			strcat(ns2, "\n");
+			fputs(ns2, file);
+		}
+		if (tunnel->ipv4.dns_suffix_was_there == 0) {
+			strcat(dns_suffix, "\n");
+			fputs(dns_suffix, file);
+		}
+#if HAVE_SYSTEMD_RESOLVE
+	} else {
+		int systemd_resolve_call_len;
+		char* systemd_resolve_call;
+		systemd_resolve_call_len = strlen(SYSTEMD_RESOLV_PATH)+10+strlen(ns_value)+strlen(dns_suffix_value);
+		systemd_resolve_call = malloc(systemd_resolve_call_len);
+		sprintf(systemd_resolve_call, "%s -i=%s %s %s", SYSTEMD_RESOLV_PATH, tunnel->ppp_iface, ns_value, dns_suffix_value);
+		ret = system(systemd_resolve_call);
+		free(systemd_resolve_call);
+		if (ret == -1)
+			return ERR_IPV4_SEE_ERRNO;
+		return 0;
 	}
-	if (tunnel->ipv4.ns2_was_there == 0) {
-		strcat(ns2, "\n");
-		fputs(ns2, file);
-	}
-	if (tunnel->ipv4.dns_suffix_was_there == 0) {
-		strcat(dns_suffix, "\n");
-		fputs(dns_suffix, file);
-	}
-#if HAVE_RESOLVCONF
-	if (use_resolvconf == 0)
+#endif
+#if HAVE_RESOLVCONF || HAVE_SYSTEMD_RESOLVE
+	if (use_resolvconf == 0 && use_systemd_resolve == 0)
 #endif
 		fwrite(buffer, stat.st_size, 1, file);
 
@@ -1259,14 +1308,14 @@ int ipv4_add_nameservers_to_resolv_conf(struct tunnel *tunnel)
 err_free:
 	free(buffer);
 err_close:
-#if HAVE_RESOLVCONF
-	if (use_resolvconf == 0) {
+#if HAVE_RESOLVCONF || HAVE_SYSTEMD_RESOLVE
+	if (use_resolvconf == 0 && use_systemd_resolve == 0) {
 #endif
 		if (fclose(file))
 			log_warn("Could not close /etc/resolv.conf: %s\n",
 			         strerror(errno));
-#if HAVE_RESOLVCONF
-	} else {
+#if HAVE_RESOLVCONF || HAVE_SYSTEMD_RESOLVE
+	} else{
 		if (pclose(file) == -1)
 			log_warn("Could not close resolvconf pipe: %s\n",
 			         strerror(errno));
@@ -1290,7 +1339,22 @@ int ipv4_del_nameservers_from_resolv_conf(struct tunnel *tunnel)
 	char *buffer = NULL;
 	char *saveptr = NULL;
 
-#if HAVE_RESOLVCONF
+#if HAVE_SYSTEMD_RESOLVE
+	if (tunnel->config->use_systemd_resolve
+	    && (access(SYSTEMD_RESOLV_PATH, F_OK) == 0)) {
+		int systemd_resolv_call_len;
+		char *systemd_resolv_call;
+
+		systemd_resolv_call_len = strlen(SYSTEMD_RESOLV_PATH)+20;
+		systemd_resolv_call = malloc(systemd_resolv_call_len)
+		sprintf(systemd_resolv_call, "%s -i=%s --revert", tunnel->ppp_iface);
+		ret = system(systemd_resolv_call);
+		free(systemd_resolv_call);
+		if (ret == -1)
+			return ERR_IPV4_SEE_ERRNO;
+		return 0;
+	}
+#elif HAVE_RESOLVCONF
 	if (tunnel->config->use_resolvconf
 	    && (access(RESOLVCONF_PATH, F_OK) == 0)) {
 		int resolvconf_call_len;

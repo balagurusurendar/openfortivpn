@@ -213,6 +213,7 @@ cast_addr(&(&route)->rt_dst)->sin_family = AF_INET;
 NETSTAT_PATH=""
 PPP_PATH=""
 RESOLVCONF_PATH=""
+SYSTEMD_RESOLV_PATH=""
 
 # prepare possibility to override default locations
 AC_ARG_WITH([netstat],
@@ -345,6 +346,8 @@ AS_IF([test "x$NETSTAT_PATH" != "x"], [
 # use resolvconf if present
 AC_PATH_PROG(RESOLVCONF_PATH, [resolvconf], [DISABLED], "$PATH:/sbin:/usr/sbin")
 
+AC_PATH_PROG(SYSTEMD_RESOLV_PATH, [systemd-resolve], [DISABLED], "$PATH:/sbin:/usr/sbin")
+
 # allow override at configure time
 AC_ARG_WITH([resolvconf],
 	AS_HELP_STRING([--with-resolvconf],
@@ -353,6 +356,16 @@ AC_ARG_WITH([resolvconf],
 			In that case it will not be compiled in and therefore be \
 			unavailable at runtime.]),
 	RESOLVCONF_PATH="$withval"
+)
+
+# allow override at configure time
+AC_ARG_WITH([systemd-resolve],
+	AS_HELP_STRING([--with-systemd-resolve],
+		       [Set the path to the systemd resolve executable. \
+			Set this to "DISABLED" to fully disable systemd resolve support. \
+			In that case it will not be compiled in and therefore be \
+			unavailable at runtime.]),
+	SYSTEMD_RESOLV_PATH="$withval"
 )
 
 AC_SUBST(RESOLVCONF_PATH)
@@ -367,11 +380,31 @@ AS_IF([test "x$RESOLVCONF_PATH" = "xDISABLED"], [
 	AC_MSG_NOTICE([HAVE_RESOLVCONF... 1])
 ])
 
+AC_SUBST(SYSTEMD_RESOLV_PATH)
+AS_IF([test "x$SYSTEMD_RESOLV_PATH" != "x"], [
+	AC_MSG_NOTICE([SYSTEMD_RESOLV_PATH...] $SYSTEMD_RESOLV_PATH)
+])
+AS_IF([test "x$SYSTEMD_RESOLV_PATH" = "xDISABLED"], [
+	AC_DEFINE(HAVE_SYSTEMD_RESOLVE, 0)
+	AC_MSG_NOTICE([HAVE_SYSTEMD_RESOLVE... 0])
+],[
+	AC_DEFINE(HAVE_SYSTEMD_RESOLVE, 1)
+	AC_MSG_NOTICE([HAVE_SYSTEMD_RESOLVE... 1])
+])
+
 # the default for the --use-resolvconf runtime command line option
 AC_ARG_ENABLE([resolvconf],
 	AS_HELP_STRING([--enable-resolvconf],
 		       [Enable usage of resolvconf at runtime by default. \
 			Use --disable-resolvconf for the opposite, note that \
+			resolvconf support will still be compliled in, but \
+			disabled if not explicitly enabled at runtime.]))
+
+# the default for the --use-systemd-resolve runtime command line option
+AC_ARG_ENABLE([systemd-resolve],
+	AS_HELP_STRING([--enable-systemd-resolve],
+		       [Enable usage of systemd-resolve at runtime by default. \
+			Use --disable-systemd-resolve for the opposite, note that \
 			resolvconf support will still be compliled in, but \
 			disabled if not explicitly enabled at runtime.]))
 
@@ -402,6 +435,35 @@ AS_IF([test "x$enable_resolvconf" = "xyes"], [
 ],[
 	AC_DEFINE(USE_RESOLVCONF, 0)
 	AC_MSG_NOTICE([USE_RESOLVCONF... 0])
+])
+
+# Determine how systemd-resolve works at build-time if it is installed:
+# * openresolv supports option -l that lists active configurations and returns 0
+# * systemd-resolve in Ubuntu/Debian does not support listing but returns 99
+#   if invoked without parameters
+# * skip resolvectl which does not work as expected when invoked as resolveconf
+AS_IF([test "x$enable_systemd_resolve" = "x" -a "x$SYSTEMD_RESOLV_PATH" != "xDISABLED"], [
+	AC_CHECK_FILE([$SYSTEMD_RESOLV_PATH],[
+		AS_IF([$SYSTEMD_RESOLV_PATH -l >/dev/null 2>/dev/null], [
+			enable_systemd_resolve="yes"
+		],[
+			AS_IF([$SYSTEMD_RESOLV_PATH  >/dev/null 2>/dev/null ; test $? -eq 99], [
+				enable_systemd_resolve="yes"
+			],[
+				enable_systemd_resolve="no"
+			])
+		])
+	],[
+		enable_systemd_resolve="no"
+	])
+])
+
+AS_IF([test "x$enable_systemd_resolve" = "xyes"], [
+	AC_DEFINE(USE_SYSTEMD_RESOLVE, 1)
+	AC_MSG_NOTICE([USE_SYSTEMD_RESOLVE... 1])
+],[
+	AC_DEFINE(USE_SYSTEMD_RESOLVE, 0)
+	AC_MSG_NOTICE([USE_SYSTEMD_RESOLVE... 0])
 ])
 
 # install systemd service file

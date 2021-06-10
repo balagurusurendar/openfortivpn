@@ -59,6 +59,9 @@ const struct vpn_config invalid_cfg = {
 #if HAVE_RESOLVCONF
 	.use_resolvconf = -1,
 #endif
+#if HAVE_SYSTEMD_RESOLVE
+	.use_systemd_resolve = -1,
+#endif
 	.use_syslog = -1,
 	.half_internet_routes = -1,
 	.persistent = -1,
@@ -380,6 +383,19 @@ int load_config(struct vpn_config *cfg, const char *filename)
 				continue;
 			}
 			cfg->use_resolvconf = use_resolvconf;
+#else
+			log_warn("Ignoring option \"%s\".\n", key);
+		} else if(strcmp(key, "use-systemd-resolve") == 0){
+#endif
+#if HAVE_RESOLVCONF
+			int use_systemd_resolve = strtob(val);
+
+			if (use_systemd_resolve < 0) {
+				log_warn("Bad use-resolvconf value in configuration file: \"%s\".\n",
+				         val);
+				continue;
+			}
+			cfg->use_systemd_resolve = use_systemd_resolve;
 #else
 			log_warn("Ignoring option \"%s\".\n", key);
 #endif
