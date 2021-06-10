@@ -385,9 +385,9 @@ int load_config(struct vpn_config *cfg, const char *filename)
 			cfg->use_resolvconf = use_resolvconf;
 #else
 			log_warn("Ignoring option \"%s\".\n", key);
-		} else if(strcmp(key, "use-systemd-resolve") == 0){
 #endif
-#if HAVE_RESOLVCONF
+	} else if(strcmp(key, "use-systemd-resolve") == 0){
+#if HAVE_SYSTEMD_RESOLVE
 			int use_systemd_resolve = strtob(val);
 
 			if (use_systemd_resolve < 0) {
