@@ -1188,81 +1188,81 @@ int ipv4_add_nameservers_to_resolv_conf(struct tunnel *tunnel)
 	{
 #endif
 #if HAVE_RESOLVCONF
-	if (tunnel->config->use_resolvconf && (access(RESOLVCONF_PATH, F_OK) == 0))
-	{
-		int resolvconf_call_len;
-		char *resolvconf_call;
-
-		log_debug("Attempting to run %s.\n", RESOLVCONF_PATH);
-		resolvconf_call_len = strlen(RESOLVCONF_PATH) + 20 + strlen(tunnel->ppp_iface);
-		resolvconf_call = malloc(resolvconf_call_len);
-		if (resolvconf_call == NULL)
+		if (tunnel->config->use_resolvconf && (access(RESOLVCONF_PATH, F_OK) == 0))
 		{
-			log_warn("Could not create command to run resolvconf (%s).\n",
-					 strerror(errno));
-			return 1;
-		}
+			int resolvconf_call_len;
+			char *resolvconf_call;
 
-		snprintf(resolvconf_call, resolvconf_call_len,
-				 "%s -a \"%s.openfortivpn\"",
-				 RESOLVCONF_PATH,
-				 tunnel->ppp_iface);
+			log_debug("Attempting to run %s.\n", RESOLVCONF_PATH);
+			resolvconf_call_len = strlen(RESOLVCONF_PATH) + 20 + strlen(tunnel->ppp_iface);
+			resolvconf_call = malloc(resolvconf_call_len);
+			if (resolvconf_call == NULL)
+			{
+				log_warn("Could not create command to run resolvconf (%s).\n",
+						 strerror(errno));
+				return 1;
+			}
 
-		use_resolvconf = 1;
-		log_debug("resolvconf_call: %s\n", resolvconf_call);
-		file = popen(resolvconf_call, "w");
-		if (file == NULL)
-		{
-			log_warn("Could not open pipe %s (%s).\n",
-					 resolvconf_call,
-					 strerror(errno));
+			snprintf(resolvconf_call, resolvconf_call_len,
+					 "%s -a \"%s.openfortivpn\"",
+					 RESOLVCONF_PATH,
+					 tunnel->ppp_iface);
+
+			use_resolvconf = 1;
+			log_debug("resolvconf_call: %s\n", resolvconf_call);
+			file = popen(resolvconf_call, "w");
+			if (file == NULL)
+			{
+				log_warn("Could not open pipe %s (%s).\n",
+						 resolvconf_call,
+						 strerror(errno));
+				free(resolvconf_call);
+				return 1;
+			}
 			free(resolvconf_call);
-			return 1;
 		}
-		free(resolvconf_call);
-	}
-	else
-	{
+		else
+		{
 #endif
-		log_debug("Attempting to modify /etc/resolv.conf directly.\n");
-		file = fopen("/etc/resolv.conf", "r+");
-		if (file == NULL)
-		{
-			log_warn("Could not open /etc/resolv.conf (%s).\n",
-					 strerror(errno));
-			return 1;
-		}
+			log_debug("Attempting to modify /etc/resolv.conf directly.\n");
+			file = fopen("/etc/resolv.conf", "r+");
+			if (file == NULL)
+			{
+				log_warn("Could not open /etc/resolv.conf (%s).\n",
+						 strerror(errno));
+				return 1;
+			}
 
-		if (fstat(fileno(file), &stat) == -1)
-		{
-			log_warn("Could not stat /etc/resolv.conf (%s).\n",
-					 strerror(errno));
-			goto err_close;
-		}
+			if (fstat(fileno(file), &stat) == -1)
+			{
+				log_warn("Could not stat /etc/resolv.conf (%s).\n",
+						 strerror(errno));
+				goto err_close;
+			}
 
-		if (stat.st_size == 0)
-		{
-			log_warn("Could not read /etc/resolv.conf (%s).\n",
-					 "Empty file");
-			goto err_close;
-		}
+			if (stat.st_size == 0)
+			{
+				log_warn("Could not read /etc/resolv.conf (%s).\n",
+						 "Empty file");
+				goto err_close;
+			}
 
-		buffer = malloc(stat.st_size + 1);
-		if (buffer == NULL)
-		{
-			log_warn("Could not read /etc/resolv.conf (%s).\n",
-					 strerror(errno));
-			goto err_close;
-		}
+			buffer = malloc(stat.st_size + 1);
+			if (buffer == NULL)
+			{
+				log_warn("Could not read /etc/resolv.conf (%s).\n",
+						 strerror(errno));
+				goto err_close;
+			}
 
-		// Copy all file contents at once
-		if (fread(buffer, stat.st_size, 1, file) != 1)
-		{
-			log_warn("Could not read /etc/resolv.conf.\n");
-			goto err_free;
-		}
+			// Copy all file contents at once
+			if (fread(buffer, stat.st_size, 1, file) != 1)
+			{
+				log_warn("Could not read /etc/resolv.conf.\n");
+				goto err_free;
+			}
 
-		buffer[stat.st_size] = '\0';
+			buffer[stat.st_size] = '\0';
 #if HAVE_RESOLVCONF
 		}
 #endif
@@ -1301,7 +1301,9 @@ int ipv4_add_nameservers_to_resolv_conf(struct tunnel *tunnel)
 				i++;
 			}
 		}
-	}else{
+	}
+	else
+	{
 
 #endif
 		if (tunnel->ipv4.ns1_addr.s_addr != 0)
@@ -1502,34 +1504,35 @@ int ipv4_del_nameservers_from_resolv_conf(struct tunnel *tunnel)
 			return ERR_IPV4_SEE_ERRNO;
 		return 0;
 	}
-#elif HAVE_RESOLVCONF
-		if (tunnel->config->use_resolvconf && (access(RESOLVCONF_PATH, F_OK) == 0))
+#endif
+#if HAVE_RESOLVCONF
+	if (tunnel->config->use_resolvconf && (access(RESOLVCONF_PATH, F_OK) == 0))
+	{
+		int resolvconf_call_len;
+		char *resolvconf_call;
+
+		resolvconf_call_len = strlen(RESOLVCONF_PATH) + 20 + strlen(tunnel->ppp_iface);
+		resolvconf_call = malloc(resolvconf_call_len);
+		if (resolvconf_call == NULL)
 		{
-			int resolvconf_call_len;
-			char *resolvconf_call;
-
-			resolvconf_call_len = strlen(RESOLVCONF_PATH) + 20 + strlen(tunnel->ppp_iface);
-			resolvconf_call = malloc(resolvconf_call_len);
-			if (resolvconf_call == NULL)
-			{
-				log_warn("Could not create command to run resolvconf (%s).\n",
-						 strerror(errno));
-				return ERR_IPV4_SEE_ERRNO;
-			}
-
-			snprintf(resolvconf_call,
-					 resolvconf_call_len,
-					 "%s -d \"%s.openfortivpn\"",
-					 RESOLVCONF_PATH,
-					 tunnel->ppp_iface);
-
-			log_debug("resolvconf_call: %s\n", resolvconf_call);
-			ret = system(resolvconf_call);
-			free(resolvconf_call);
-			if (ret == -1)
-				return ERR_IPV4_SEE_ERRNO;
-			return 0;
+			log_warn("Could not create command to run resolvconf (%s).\n",
+					 strerror(errno));
+			return ERR_IPV4_SEE_ERRNO;
 		}
+
+		snprintf(resolvconf_call,
+				 resolvconf_call_len,
+				 "%s -d \"%s.openfortivpn\"",
+				 RESOLVCONF_PATH,
+				 tunnel->ppp_iface);
+
+		log_debug("resolvconf_call: %s\n", resolvconf_call);
+		ret = system(resolvconf_call);
+		free(resolvconf_call);
+		if (ret == -1)
+			return ERR_IPV4_SEE_ERRNO;
+		return 0;
+	}
 #endif
 
 	file = fopen("/etc/resolv.conf", "r+");
