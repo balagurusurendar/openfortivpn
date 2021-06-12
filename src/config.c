@@ -28,8 +28,9 @@
 
 #include "config.h"
 #include "log.h"
+#include "util.h"
 
-#include <openssl/x509.h>  /* work around OpenSSL bug: missing definition of STACK_OF */
+#include <openssl/x509.h> /* work around OpenSSL bug: missing definition of STACK_OF */
 #include <openssl/tls1.h>
 
 #include <sys/stat.h>
@@ -89,6 +90,7 @@ const struct vpn_config invalid_cfg = {
 	.user_agent = NULL,
 	.hostcheck = NULL,
 	.check_virtual_desktop = NULL,
+	.append_ns_search = NULL,
 };
 
 /*
@@ -106,11 +108,14 @@ int add_trusted_cert(struct vpn_config *cfg, const char *digest)
 	strncpy(new->data, digest, SHA256STRLEN - 1);
 	new->data[SHA256STRLEN - 1] = '\0';
 
-	if (cfg->cert_whitelist == NULL) {
+	if (cfg->cert_whitelist == NULL)
+	{
 		cfg->cert_whitelist = new;
-	} else {
+	}
+	else
+	{
 		for (last = cfg->cert_whitelist; last->next != NULL;
-		     last = last->next)
+			 last = last->next)
 			;
 		last->next = new;
 	}
@@ -152,7 +157,8 @@ int parse_min_tls(const char *str)
 {
 	if (str[0] != '1' || str[1] != '.' || str[2] == 0 || str[3] != 0)
 		return -1;
-	switch (str[2]) {
+	switch (str[2])
+	{
 #ifdef TLS1_VERSION
 	case '0':
 		return TLS1_VERSION;
@@ -174,6 +180,24 @@ int parse_min_tls(const char *str)
 	}
 }
 
+char **parse_append_ns_search(char *ns_search)
+{
+	char **ns_search_array = NULL;
+	if(strstr(ns_search, ";")!=NULL){
+		ns_search_array = string_split(ns_search, ";");
+	}else if (strstr(ns_search, " ")!=NULL)
+	{
+		ns_search_array = string_split(ns_search, ",");
+	}else{
+		ns_search_array = string_split(ns_search, " ");
+	}
+	if(ns_search_array[0]!=NULL){
+		return ns_search_array;
+	}
+	free_custom_string_array(ns_search_array);
+	return NULL;
+}
+
 /*
  * Reads filename contents and fill cfg with its values.
  *
@@ -192,23 +216,27 @@ int load_config(struct vpn_config *cfg, const char *filename)
 	if (file == NULL)
 		return ERR_CFG_SEE_ERRNO;
 
-	if (fstat(fileno(file), &stat) == -1) {
+	if (fstat(fileno(file), &stat) == -1)
+	{
 		ret = ERR_CFG_SEE_ERRNO;
 		goto err_close;
 	}
-	if (stat.st_size == 0) {
+	if (stat.st_size == 0)
+	{
 		ret = ERR_CFG_EMPTY_FILE;
 		goto err_close;
 	}
 
 	buffer = malloc(stat.st_size + 1);
-	if (buffer == NULL) {
+	if (buffer == NULL)
+	{
 		ret = ERR_CFG_NO_MEM;
 		goto err_close;
 	}
 
 	// Copy all file contents at once
-	if (fread(buffer, stat.st_size, 1, file) != 1) {
+	if (fread(buffer, stat.st_size, 1, file) != 1)
+	{
 		ret = ERR_CFG_CANNOT_READ;
 		goto err_free;
 	}
@@ -217,7 +245,8 @@ int load_config(struct vpn_config *cfg, const char *filename)
 
 	// Read line by line
 	for (line = strtok_r(buffer, "\n", &saveptr); line != NULL;
-	     line = strtok_r(NULL, "\n", &saveptr)) {
+		 line = strtok_r(NULL, "\n", &saveptr))
+	{
 		char *key, *equals, *val;
 		int i;
 
@@ -226,7 +255,8 @@ int load_config(struct vpn_config *cfg, const char *filename)
 
 		// Expect something like: "key = value"
 		equals = strchr(line, '=');
-		if (equals == NULL) {
+		if (equals == NULL)
+		{
 			log_warn("Bad line in configuration file: \"%s\".\n", line);
 			continue;
 		}
@@ -240,241 +270,339 @@ int load_config(struct vpn_config *cfg, const char *filename)
 		while (isspace(val[0]))
 			val++;
 		// Remove trailing spaces
-		for (i = strlen(key) - 1; i > 0; i--) {
+		for (i = strlen(key) - 1; i > 0; i--)
+		{
 			if (isspace(key[i]))
 				key[i] = '\0';
 			else
 				break;
 		}
-		for (i = strlen(val) - 1; i > 0; i--) {
+		for (i = strlen(val) - 1; i > 0; i--)
+		{
 			if (isspace(val[i]))
 				val[i] = '\0';
 			else
 				break;
 		}
 
-		if (strcmp(key, "host") == 0) {
+		if (strcmp(key, "host") == 0)
+		{
 			strncpy(cfg->gateway_host, val, GATEWAY_HOST_SIZE);
 			cfg->gateway_host[GATEWAY_HOST_SIZE] = '\0';
-		} else if (strcmp(key, "port") == 0) {
+		}
+		else if (strcmp(key, "port") == 0)
+		{
 			unsigned long port = strtoul(val, NULL, 0);
 
-			if (port == 0 || port > 65535) {
+			if (port == 0 || port > 65535)
+			{
 				log_warn("Bad port in configuration file: \"%lu\".\n",
-				         port);
+						 port);
 				continue;
 			}
 			cfg->gateway_port = port;
-		} else if (strcmp(key, "username") == 0) {
+		}
+		else if (strcmp(key, "username") == 0)
+		{
 			strncpy(cfg->username, val, USERNAME_SIZE);
 			cfg->username[USERNAME_SIZE] = '\0';
-		} else if (strcmp(key, "password") == 0) {
+		}
+		else if (strcmp(key, "password") == 0)
+		{
 			strncpy(cfg->password, val, PASSWORD_SIZE);
 			cfg->password[PASSWORD_SIZE] = '\0';
 			cfg->password_set = 1;
-		} else if (strcmp(key, "otp") == 0) {
+		}
+		else if (strcmp(key, "otp") == 0)
+		{
 			strncpy(cfg->otp, val, OTP_SIZE);
 			cfg->otp[OTP_SIZE] = '\0';
-		} else if (strcmp(key, "otp-prompt") == 0) {
+		}
+		else if (strcmp(key, "otp-prompt") == 0)
+		{
 			free(cfg->otp_prompt);
 			cfg->otp_prompt = strdup(val);
-		} else if (strcmp(key, "otp-delay") == 0) {
+		}
+		else if (strcmp(key, "otp-delay") == 0)
+		{
 			long otp_delay = strtol(val, NULL, 0);
 
-			if (otp_delay < 0 || otp_delay > UINT_MAX) {
+			if (otp_delay < 0 || otp_delay > UINT_MAX)
+			{
 				log_warn("Bad value for otp-delay in configuration file: \"%s\".\n",
-				         val);
+						 val);
 				continue;
 			}
 			cfg->otp_delay = otp_delay;
-		} else if (strcmp(key, "no-ftm-push") == 0) {
+		}
+		else if (strcmp(key, "no-ftm-push") == 0)
+		{
 			int no_ftm_push = strtob(val);
 
-			if (no_ftm_push < 0) {
+			if (no_ftm_push < 0)
+			{
 				log_warn("Bad no-ftm-push in configuration file: \"%s\".\n",
-				         val);
+						 val);
 				continue;
 			}
 			cfg->no_ftm_push = no_ftm_push;
-		} else if (strcmp(key, "pinentry") == 0) {
+		}
+		else if (strcmp(key, "pinentry") == 0)
+		{
 			free(cfg->pinentry);
 			cfg->pinentry = strdup(val);
-		} else if (strcmp(key, "realm") == 0) {
+		}
+		else if (strcmp(key, "realm") == 0)
+		{
 			strncpy(cfg->realm, val, REALM_SIZE);
 			cfg->realm[REALM_SIZE] = '\0';
-		} else if (strcmp(key, "set-dns") == 0) {
+		}
+		else if (strcmp(key, "set-dns") == 0)
+		{
 			int set_dns = strtob(val);
 
-			if (set_dns < 0) {
+			if (set_dns < 0)
+			{
 				log_warn("Bad set-dns in configuration file: \"%s\".\n",
-				         val);
+						 val);
 				continue;
 			}
 			cfg->set_dns = set_dns;
-		} else if (strcmp(key, "set-routes") == 0) {
+		}
+		else if (strcmp(key, "set-routes") == 0)
+		{
 			int set_routes = strtob(val);
 
-			if (set_routes < 0) {
+			if (set_routes < 0)
+			{
 				log_warn("Bad set-routes in configuration file: \"%s\".\n",
-				         val);
+						 val);
 				continue;
 			}
 			cfg->set_routes = set_routes;
-		} else if (strcmp(key, "half-internet-routes") == 0) {
+		}
+		else if (strcmp(key, "half-internet-routes") == 0)
+		{
 			int half_internet_routes = strtob(val);
 
-			if (half_internet_routes < 0) {
+			if (half_internet_routes < 0)
+			{
 				log_warn("Bad half-internet-routes in configuration file: \"%s\".\n",
-				         val);
+						 val);
 				continue;
 			}
 			cfg->half_internet_routes = half_internet_routes;
-		} else if (strcmp(key, "persistent") == 0) {
+		}
+		else if (strcmp(key, "persistent") == 0)
+		{
 			unsigned long persistent = strtoul(val, NULL, 0);
 
-			if (persistent > UINT_MAX) {
+			if (persistent > UINT_MAX)
+			{
 				log_warn("Bad value for persistent in configuration file: \"%s\".\n",
-				         val);
+						 val);
 				continue;
 			}
 			cfg->persistent = persistent;
 #if HAVE_USR_SBIN_PPPD
-		} else if (strcmp(key, "pppd-use-peerdns") == 0) {
+		}
+		else if (strcmp(key, "pppd-use-peerdns") == 0)
+		{
 			int pppd_use_peerdns = strtob(val);
 
-			if (pppd_use_peerdns < 0) {
+			if (pppd_use_peerdns < 0)
+			{
 				log_warn("Bad pppd-use-peerdns in configuration file: \"%s\".\n",
-				         val);
+						 val);
 				continue;
 			}
 			cfg->pppd_use_peerdns = pppd_use_peerdns;
-		} else if (strcmp(key, "pppd-log") == 0) {
+		}
+		else if (strcmp(key, "pppd-log") == 0)
+		{
 			free(cfg->pppd_log);
 			cfg->pppd_log = strdup(val);
-		} else if (strcmp(key, "pppd-plugin") == 0) {
+		}
+		else if (strcmp(key, "pppd-plugin") == 0)
+		{
 			free(cfg->pppd_plugin);
 			cfg->pppd_plugin = strdup(val);
-		} else if (strcmp(key, "pppd-ipparam") == 0) {
+		}
+		else if (strcmp(key, "pppd-ipparam") == 0)
+		{
 			free(cfg->pppd_ipparam);
 			cfg->pppd_ipparam = strdup(val);
-		} else if (strcmp(key, "pppd-ifname") == 0) {
+		}
+		else if (strcmp(key, "pppd-ifname") == 0)
+		{
 			free(cfg->pppd_ifname);
 			cfg->pppd_ifname = strdup(val);
-		} else if (strcmp(key, "pppd-call") == 0) {
+		}
+		else if (strcmp(key, "pppd-call") == 0)
+		{
 			free(cfg->pppd_call);
 			cfg->pppd_call = strdup(val);
 #else
-		} else if (strcmp(key, "pppd") == 0) {
+		}
+		else if (strcmp(key, "pppd") == 0)
+		{
 			log_warn("Ignoring pppd option \"%s\".\n", key);
 #endif
-		} else if (strcmp(key, "ppp-system") == 0) {
+		}
+		else if (strcmp(key, "ppp-system") == 0)
+		{
 #if HAVE_USR_SBIN_PPP
 			cfg->ppp_system = strdup(val);
 #else
 			log_warn("Ignoring option \"%s\".\n", key);
 #endif
-		} else if (strcmp(key, "use-resolvconf") == 0) {
+		}
+		else if (strcmp(key, "use-resolvconf") == 0)
+		{
 #if HAVE_RESOLVCONF
 			int use_resolvconf = strtob(val);
 
-			if (use_resolvconf < 0) {
+			if (use_resolvconf < 0)
+			{
 				log_warn("Bad use-resolvconf value in configuration file: \"%s\".\n",
-				         val);
+						 val);
 				continue;
 			}
 			cfg->use_resolvconf = use_resolvconf;
 #else
 			log_warn("Ignoring option \"%s\".\n", key);
 #endif
-	} else if(strcmp(key, "use-systemd-resolve") == 0){
+		}
+		else if (strcmp(key, "use-systemd-resolve") == 0)
+		{
 #if HAVE_SYSTEMD_RESOLVE
 			int use_systemd_resolve = strtob(val);
 
-			if (use_systemd_resolve < 0) {
+			if (use_systemd_resolve < 0)
+			{
 				log_warn("Bad use-resolvconf value in configuration file: \"%s\".\n",
-				         val);
+						 val);
 				continue;
 			}
 			cfg->use_systemd_resolve = use_systemd_resolve;
 #else
 			log_warn("Ignoring option \"%s\".\n", key);
 #endif
-		} else if (strcmp(key, "use-syslog") == 0) {
+		}
+		else if (strcmp(key, "use-syslog") == 0)
+		{
 			int use_syslog = strtob(val);
 
-			if (use_syslog < 0) {
+			if (use_syslog < 0)
+			{
 				log_warn("Bad use-syslog in configuration file: \"%s\".\n",
-				         val);
+						 val);
 				continue;
 			}
 			cfg->use_syslog = use_syslog;
-		} else if (strcmp(key, "trusted-cert") == 0) {
-			if (strlen(val) != SHA256STRLEN - 1) {
+		}
+		else if (strcmp(key, "trusted-cert") == 0)
+		{
+			if (strlen(val) != SHA256STRLEN - 1)
+			{
 				log_warn("Bad certificate sha256 digest in configuration file: \"%s\".\n",
-				         val);
+						 val);
 				continue;
 			}
 			if (add_trusted_cert(cfg, val))
 				log_warn("Could not add certificate digest to whitelist.\n");
-
-		} else if (strcmp(key, "ca-file") == 0) {
+		}
+		else if (strcmp(key, "ca-file") == 0)
+		{
 			free(cfg->ca_file);
 			cfg->ca_file = strdup(val);
-		} else if (strcmp(key, "user-cert") == 0) {
+		}
+		else if (strcmp(key, "user-cert") == 0)
+		{
 			free(cfg->user_cert);
 			cfg->user_cert = strdup(val);
 			if (strncmp(cfg->user_cert, "pkcs11:", 7) == 0)
 				cfg->use_engine = 1;
-		} else if (strcmp(key, "user-key") == 0) {
+		}
+		else if (strcmp(key, "user-key") == 0)
+		{
 			free(cfg->user_key);
 			cfg->user_key = strdup(val);
-		} else if (strcmp(key, "pem-passphrase") == 0) {
+		}
+		else if (strcmp(key, "pem-passphrase") == 0)
+		{
 			strncpy(cfg->pem_passphrase, val, PEM_PASSPHRASE_SIZE);
 			cfg->pem_passphrase[PEM_PASSPHRASE_SIZE] = '\0';
 			cfg->pem_passphrase_set = 1;
-		} else if (strcmp(key, "insecure-ssl") == 0) {
+		}
+		else if (strcmp(key, "insecure-ssl") == 0)
+		{
 			int insecure_ssl = strtob(val);
 
-			if (insecure_ssl < 0) {
+			if (insecure_ssl < 0)
+			{
 				log_warn("Bad insecure-ssl in configuration file: \"%s\".\n",
-				         val);
+						 val);
 				continue;
 			}
 			cfg->insecure_ssl = insecure_ssl;
-		} else if (strcmp(key, "cipher-list") == 0) {
+		}
+		else if (strcmp(key, "cipher-list") == 0)
+		{
 			free(cfg->cipher_list);
 			cfg->cipher_list = strdup(val);
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
-		} else if (strcmp(key, "min-tls") == 0) {
+		}
+		else if (strcmp(key, "min-tls") == 0)
+		{
 			int min_tls = parse_min_tls(val);
 
-			if (min_tls == -1) {
+			if (min_tls == -1)
+			{
 				log_warn("Bad min-tls in configuration file: \"%s\".\n",
-				         val);
+						 val);
 				continue;
-			} else {
+			}
+			else
+			{
 				cfg->min_tls = min_tls;
 			}
 #endif
-		} else if (strcmp(key, "seclevel-1") == 0) {
+		}
+		else if (strcmp(key, "seclevel-1") == 0)
+		{
 			int seclevel_1 = strtob(val);
 
-			if (seclevel_1 < 0) {
+			if (seclevel_1 < 0)
+			{
 				log_warn("Bad seclevel-1 in configuration file: \"%s\".\n",
-				         val);
+						 val);
 				continue;
 			}
 			cfg->seclevel_1 = seclevel_1;
-		} else if (strcmp(key, "user-agent") == 0) {
+		}
+		else if (strcmp(key, "user-agent") == 0)
+		{
 			free(cfg->user_agent);
 			cfg->user_agent = strdup(val);
-		} else if (strcmp(key, "hostcheck") == 0) {
+		}
+		else if (strcmp(key, "hostcheck") == 0)
+		{
 			free(cfg->hostcheck);
 			cfg->hostcheck = strdup(val);
-		} else if (strcmp(key, "check-virtual-desktop") == 0) {
+		}
+		else if (strcmp(key, "check-virtual-desktop") == 0)
+		{
 			free(cfg->check_virtual_desktop);
 			cfg->check_virtual_desktop = strdup(val);
-		} else {
+		}
+		else if (strcmp(key, "append_ns_search") == 0)
+		{
+			free(cfg->append_ns_search);
+			cfg->append_ns_search = parse_append_ns_search(strdup(val));
+		}
+		else
+		{
 			log_warn("Bad key in configuration file: \"%s\".\n", key);
 			goto err_free;
 		}
@@ -512,12 +640,14 @@ void destroy_vpn_config(struct vpn_config *cfg)
 	free(cfg->user_agent);
 	free(cfg->hostcheck);
 	free(cfg->check_virtual_desktop);
-	while (cfg->cert_whitelist != NULL) {
+	while (cfg->cert_whitelist != NULL)
+	{
 		struct x509_digest *tmp = cfg->cert_whitelist->next;
 
 		free(cfg->cert_whitelist);
 		cfg->cert_whitelist = tmp;
 	}
+	free_custom_string_array(cfg->append_ns_search);
 }
 
 void merge_config(struct vpn_config *dst, struct vpn_config *src)
@@ -528,7 +658,8 @@ void merge_config(struct vpn_config *dst, struct vpn_config *src)
 		dst->gateway_port = src->gateway_port;
 	if (src->username[0])
 		strcpy(dst->username, src->username);
-	if (src->password_set) {
+	if (src->password_set)
+	{
 		strcpy(dst->password, src->password);
 		dst->password_set = src->password_set;
 	}
@@ -538,7 +669,8 @@ void merge_config(struct vpn_config *dst, struct vpn_config *src)
 		dst->otp_delay = src->otp_delay;
 	if (src->no_ftm_push != invalid_cfg.no_ftm_push)
 		dst->no_ftm_push = src->no_ftm_push;
-	if (src->pinentry) {
+	if (src->pinentry)
+	{
 		free(dst->pinentry);
 		dst->pinentry = src->pinentry;
 	}
@@ -556,6 +688,10 @@ void merge_config(struct vpn_config *dst, struct vpn_config *src)
 	if (src->use_resolvconf != invalid_cfg.use_resolvconf)
 		dst->use_resolvconf = src->use_resolvconf;
 #endif
+#if HAVE_SYSTEMD_RESOLVE
+	if (src->use_systemd_resolve != invalid_cfg.use_systemd_resolve)
+		dst->use_systemd_resolve = src->use_systemd_resolve;
+#endif
 	if (src->use_syslog != invalid_cfg.use_syslog)
 		dst->use_syslog = src->use_syslog;
 	if (src->half_internet_routes != invalid_cfg.half_internet_routes)
@@ -563,54 +699,65 @@ void merge_config(struct vpn_config *dst, struct vpn_config *src)
 	if (src->persistent != invalid_cfg.persistent)
 		dst->persistent = src->persistent;
 #if HAVE_USR_SBIN_PPPD
-	if (src->pppd_log) {
+	if (src->pppd_log)
+	{
 		free(dst->pppd_log);
 		dst->pppd_log = src->pppd_log;
 	}
-	if (src->pppd_plugin) {
+	if (src->pppd_plugin)
+	{
 		free(dst->pppd_plugin);
 		dst->pppd_plugin = src->pppd_plugin;
 	}
-	if (src->pppd_ipparam) {
+	if (src->pppd_ipparam)
+	{
 		free(dst->pppd_ipparam);
 		dst->pppd_ipparam = src->pppd_ipparam;
 	}
-	if (src->pppd_ifname) {
+	if (src->pppd_ifname)
+	{
 		free(dst->pppd_ifname);
 		dst->pppd_ifname = src->pppd_ifname;
 	}
-	if (src->pppd_call) {
+	if (src->pppd_call)
+	{
 		free(dst->pppd_call);
 		dst->pppd_call = src->pppd_call;
 	}
 #endif
 #if HAVE_USR_SBIN_PPP
-	if (src->ppp_system) {
+	if (src->ppp_system)
+	{
 		free(dst->ppp_system);
 		dst->ppp_system = src->ppp_system;
 	}
 #endif
-	if (src->ca_file) {
+	if (src->ca_file)
+	{
 		free(dst->ca_file);
 		dst->ca_file = src->ca_file;
 	}
-	if (src->user_cert) {
+	if (src->user_cert)
+	{
 		free(dst->user_cert);
 		if (strncmp(src->user_cert, "pkcs11:", 7) == 0)
 			dst->use_engine = 1;
 		dst->user_cert = src->user_cert;
 	}
-	if (src->user_key) {
+	if (src->user_key)
+	{
 		free(dst->user_key);
 		dst->user_key = src->user_key;
 	}
-	if (src->pem_passphrase_set) {
+	if (src->pem_passphrase_set)
+	{
 		strcpy(dst->pem_passphrase, src->pem_passphrase);
 		dst->pem_passphrase_set = src->pem_passphrase_set;
 	}
 	if (src->insecure_ssl != invalid_cfg.insecure_ssl)
 		dst->insecure_ssl = src->insecure_ssl;
-	if (src->cipher_list) {
+	if (src->cipher_list)
+	{
 		free(dst->cipher_list);
 		dst->cipher_list = src->cipher_list;
 	}
@@ -618,8 +765,10 @@ void merge_config(struct vpn_config *dst, struct vpn_config *src)
 		dst->min_tls = src->min_tls;
 	if (src->seclevel_1 != invalid_cfg.seclevel_1)
 		dst->seclevel_1 = src->seclevel_1;
-	if (src->cert_whitelist) {
-		while (dst->cert_whitelist != NULL) {
+	if (src->cert_whitelist)
+	{
+		while (dst->cert_whitelist != NULL)
+		{
 			struct x509_digest *tmp = dst->cert_whitelist->next;
 
 			free(dst->cert_whitelist);
@@ -633,4 +782,6 @@ void merge_config(struct vpn_config *dst, struct vpn_config *src)
 		dst->hostcheck = src->hostcheck;
 	if (src->check_virtual_desktop != invalid_cfg.check_virtual_desktop)
 		dst->check_virtual_desktop = src->check_virtual_desktop;
+	if (src->append_ns_search != invalid_cfg.append_ns_search)
+		dst->append_ns_search = src->append_ns_search;
 }

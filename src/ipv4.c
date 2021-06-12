@@ -20,6 +20,7 @@
 #include "config.h"
 #include "log.h"
 #include "xml.h"
+#include "util.h"
 
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -1122,30 +1123,6 @@ static inline char *replace_char(char *str, char find, char replace)
 	return str;
 }
 
-static inline char **fStrSplit(char *str, const char *delimiters)
-{
-	char *token;
-	char **tokenArray;
-	int count = 0;
-	token = (char *)strtok(str, delimiters); // Get the first token
-	tokenArray = (char **)malloc(1 * sizeof(char *));
-	tokenArray[0] = NULL;
-	if (!token)
-	{
-		return tokenArray;
-	}
-	while (token != NULL)
-	{ // While valid tokens are returned
-		tokenArray[count] = (char *)strdup(token);
-		//printf ("%s", tokenArray[count]);
-		count++;
-		tokenArray = (char **)realloc(tokenArray, sizeof(char *) * (count + 1));
-		token = (char *)strtok(NULL, delimiters); // Get the next token
-	}
-	tokenArray[count] = NULL; /* Terminate the array */
-	return tokenArray;
-}
-
 int ipv4_add_nameservers_to_resolv_conf(struct tunnel *tunnel)
 {
 	int ret = -1;
@@ -1154,39 +1131,89 @@ int ipv4_add_nameservers_to_resolv_conf(struct tunnel *tunnel)
 #define NS_SIZE ARRAY_SIZE("nameserver xxx.xxx.xxx.xxx\n")
 	char ns1[NS_SIZE], ns2[NS_SIZE];
 #undef NS_SIZE
-#define NS_VALUE_SIZE ARRAY_SIZE("--set-dns=xxx.xxx.xxx.xxx --set-dns=xxx.xxx.xxx.xxx")
-	char ns_value[NS_VALUE_SIZE];
-#undef NS_VALUE_SIZE
-#define DNS_SUFFIX_SIZE (ARRAY_SIZE("search \n") + MAX_DOMAIN_LENGTH)
-	char dns_suffix[DNS_SUFFIX_SIZE];
-#undef DNS_SUFFIX_SIZE
-#define DNS_SUFFIX_VALUE_SIZE (ARRAY_SIZE("--set-domain= \n") + MAX_DOMAIN_LENGTH)
-	char dns_suffix_value[DNS_SUFFIX_VALUE_SIZE];
-#undef DNS_SUFFIX_VALUE_SIZE
+	char *domain = NULL;
+	char **domain_array = NULL;
 	char *buffer = NULL;
-#if HAVE_SYSTEMD_RESOLVE || HAVE_RESOLVCONF
-	int use_systemd_resolve = 0;
+#if HAVE_RESOLVCONF
 	int use_resolvconf = 0;
 #endif
-
-	tunnel->ipv4.ns1_was_there = 0;
-	tunnel->ipv4.ns2_was_there = 0;
-	tunnel->ipv4.dns_suffix_was_there = 0;
-
-	if (tunnel->ipv4.ns1_addr.s_addr == 0)
-		tunnel->ipv4.ns1_was_there = -1;
-
-	if (tunnel->ipv4.ns2_addr.s_addr == 0)
-		tunnel->ipv4.ns2_was_there = -1;
-
 #if HAVE_SYSTEMD_RESOLVE
+	char *systemd_resolve_command;
+	int use_systemd_resolve = 0;
 	if (tunnel->config->use_systemd_resolve && (access(SYSTEMD_RESOLV_PATH, F_OK) == 0))
 	{
 		use_systemd_resolve = 1;
+#define NS_SIZE ARRAY_SIZE(" xxx.xxx.xxx.xxx xxx.xxx.xxx.xxx")
+		char ns[NS_SIZE];
+#undef NS_SIZE
+		int systemd_resolve_command_len;
+		int run_command = 0;
+		strcpy(ns, " ");
+		if (tunnel->ipv4.ns1_addr.s_addr != 0)
+		{
+			run_command = 1;
+			strncat(ns, inet_ntoa(tunnel->ipv4.ns1_addr), 15);
+		}
+
+		if (tunnel->ipv4.ns2_addr.s_addr != 0)
+		{
+			run_command = 1;
+			strcat(ns, " ");
+			strncat(ns, inet_ntoa(tunnel->ipv4.ns2_addr), 15);
+		}
+
+		if (run_command == 1)
+		{
+			systemd_resolve_command_len = strlen(SYSTEMD_RESOLV_PATH) + 6 + strlen(tunnel->ppp_iface) + strlen(ns);
+			systemd_resolve_command = malloc(systemd_resolve_command_len);
+			snprintf(systemd_resolve_command, systemd_resolve_command_len, "%s dns %s %s", SYSTEMD_RESOLV_PATH, tunnel->ppp_iface, ns);
+			log_debug("command executed %s", systemd_resolve_command);
+			ret = system(systemd_resolve_command);
+			free(systemd_resolve_command);
+			if (ret == -1)
+				goto err_free;
+		}
+		run_command = 0;
+		if (tunnel->config->append_ns_search != NULL)
+		{
+			run_command = 1;
+			domain_array = merge_custom_string_array(NULL, tunnel->config->append_ns_search);
+		}
+		if (tunnel->ipv4.dns_suffix != NULL)
+		{
+			run_command = 1;
+			char **domain_array_from_tunnel = string_split(tunnel->ipv4.dns_suffix, ";");
+			domain_array = merge_custom_string_array(domain_array, domain_array_from_tunnel);
+			domain = string_join(domain_array, " ");
+			log_debug("domain calculated %s", domain);
+			free_custom_string_array(domain_array_from_tunnel);
+		}
+		if (run_command == 1)
+		{
+			systemd_resolve_command_len = strlen(SYSTEMD_RESOLV_PATH) + 10 + strlen(tunnel->ppp_iface) + strlen(domain);
+			systemd_resolve_command = malloc(systemd_resolve_command_len);
+			snprintf(systemd_resolve_command, systemd_resolve_command_len, "%s domain %s %s ", SYSTEMD_RESOLV_PATH, tunnel->ppp_iface, domain);
+			log_debug("command to be executed %s", systemd_resolve_command);
+			ret = system(systemd_resolve_command);
+			free(systemd_resolve_command);
+			if (ret == -1)
+				goto err_free;
+		}
 	}
 	else
 	{
 #endif
+
+		tunnel->ipv4.ns1_was_there = 0;
+		tunnel->ipv4.ns2_was_there = 0;
+		tunnel->ipv4.dns_suffix_was_there = 0;
+
+		if (tunnel->ipv4.ns1_addr.s_addr == 0)
+			tunnel->ipv4.ns1_was_there = -1;
+
+		if (tunnel->ipv4.ns2_addr.s_addr == 0)
+			tunnel->ipv4.ns2_was_there = -1;
+
 #if HAVE_RESOLVCONF
 		if (tunnel->config->use_resolvconf && (access(RESOLVCONF_PATH, F_OK) == 0))
 		{
@@ -1266,46 +1293,6 @@ int ipv4_add_nameservers_to_resolv_conf(struct tunnel *tunnel)
 #if HAVE_RESOLVCONF
 		}
 #endif
-#if HAVE_SYSTEMD_RESOLVE
-	}
-#endif
-#if HAVE_SYSTEMD_RESOLVE
-	if (use_systemd_resolve == 1)
-	{
-		if (tunnel->ipv4.ns1_addr.s_addr != 0)
-		{
-			strcpy(ns_value, "--set-dns=");
-			strncat(ns_value, inet_ntoa(tunnel->ipv4.ns1_addr), 15);
-			strcat(ns_value, " ");
-			if (tunnel->ipv4.ns2_addr.s_addr != 0)
-			{
-				strcat(ns_value, "--set-dns=");
-				strncat(ns_value, inet_ntoa(tunnel->ipv4.ns2_addr), 15);
-			}
-			strcat(ns_value, "\0");
-		}
-		else
-		{
-			ns_value[0] = '\0';
-		}
-
-		if (tunnel->ipv4.dns_suffix != NULL)
-		{
-			char **dns_suffixes = (char **)fStrSplit(tunnel->ipv4.dns_suffix, ";");
-			int i = 0;
-			strcpy(dns_suffix_value, " ");
-			while (dns_suffixes[i] != NULL)
-			{
-				strcat(dns_suffix_value, " --set-domain=");
-				strcat(dns_suffix_value, dns_suffixes[i]);
-				i++;
-			}
-		}
-	}
-	else
-	{
-
-#endif
 		if (tunnel->ipv4.ns1_addr.s_addr != 0)
 		{
 			strcpy(ns1, "nameserver ");
@@ -1326,92 +1313,88 @@ int ipv4_add_nameservers_to_resolv_conf(struct tunnel *tunnel)
 			ns2[0] = '\0';
 		}
 
+		if (tunnel->config->append_ns_search != NULL)
+		{
+			domain_array = merge_custom_string_array(NULL, tunnel->config->append_ns_search);
+		}
 		if (tunnel->ipv4.dns_suffix != NULL)
 		{
-			strcpy(dns_suffix, "search ");
-			strncat(dns_suffix, tunnel->ipv4.dns_suffix, MAX_DOMAIN_LENGTH);
-			replace_char(dns_suffix, ';', ' ');
+			char **domain_array_from_tunnel = string_split(tunnel->ipv4.dns_suffix, ";");
+			domain_array = merge_custom_string_array(domain_array, domain_array_from_tunnel);
+			domain = string_join(domain_array, " ");
+			domain = (char *)realloc(domain, (strlen(domain)+8)*sizeof(char));
+			string_prepend(domain, "search ");
+			log_debug("domain calculated %s", domain);
+			free_custom_string_array(domain_array_from_tunnel);
 		}
-		else
+
+#if HAVE_RESOLVCONF
+		if (use_resolvconf == 0)
 		{
-			dns_suffix[0] = '\0';
-		}
-#if HAVE_SYSTEMD_RESOLVE
-	}
 #endif
+			char *saveptr = NULL;
 
-#if HAVE_RESOLVCONF || HAVE_SYSTEMD_RESOLVE
-	if (use_resolvconf == 0 && use_systemd_resolve == 0)
-	{
-#endif
-		char *saveptr = NULL;
-
-		for (const char *line = strtok_r(buffer, "\n", &saveptr);
-			 line != NULL;
-			 line = strtok_r(NULL, "\n", &saveptr))
-		{
-			if (strcmp(line, ns1) == 0)
-			{
-				tunnel->ipv4.ns1_was_there = 1;
-				log_debug("ns1 already present in /etc/resolv.conf.\n");
-			}
-		}
-
-		if (tunnel->ipv4.ns1_was_there == 0)
-			log_debug("Adding \"%s\", to /etc/resolv.conf.\n", ns1);
-
-		for (const char *line = strtok_r(buffer, "\n", &saveptr);
-			 line != NULL;
-			 line = strtok_r(NULL, "\n", &saveptr))
-		{
-			if (strcmp(line, ns2) == 0)
-			{
-				tunnel->ipv4.ns2_was_there = 1;
-				log_debug("ns2 already present in /etc/resolv.conf.\n");
-			}
-		}
-
-		if (tunnel->ipv4.ns2_was_there == 0)
-			log_debug("Adding \"%s\", to /etc/resolv.conf.\n", ns2);
-
-		if (dns_suffix[0] == '\0')
-		{
-			tunnel->ipv4.dns_suffix_was_there = -1;
-		}
-		else
-		{
 			for (const char *line = strtok_r(buffer, "\n", &saveptr);
 				 line != NULL;
 				 line = strtok_r(NULL, "\n", &saveptr))
 			{
-				if (dns_suffix[0] != '\0' && strcmp(line, dns_suffix) == 0)
+				if (strcmp(line, ns1) == 0)
 				{
-					tunnel->ipv4.dns_suffix_was_there = 1;
-					log_debug("dns_suffix already present in /etc/resolv.conf.\n");
+					tunnel->ipv4.ns1_was_there = 1;
+					log_debug("ns1 already present in /etc/resolv.conf.\n");
 				}
 			}
+
+			if (tunnel->ipv4.ns1_was_there == 0)
+				log_debug("Adding \"%s\", to /etc/resolv.conf.\n", ns1);
+
+			for (const char *line = strtok_r(buffer, "\n", &saveptr);
+				 line != NULL;
+				 line = strtok_r(NULL, "\n", &saveptr))
+			{
+				if (strcmp(line, ns2) == 0)
+				{
+					tunnel->ipv4.ns2_was_there = 1;
+					log_debug("ns2 already present in /etc/resolv.conf.\n");
+				}
+			}
+
+			if (tunnel->ipv4.ns2_was_there == 0)
+				log_debug("Adding \"%s\", to /etc/resolv.conf.\n", ns2);
+
+			if (domain == NULL)
+			{
+				tunnel->ipv4.dns_suffix_was_there = -1;
+			}
+			else
+			{
+				for (const char *line = strtok_r(buffer, "\n", &saveptr);
+					 line != NULL;
+					 line = strtok_r(NULL, "\n", &saveptr))
+				{
+					if (strcmp(line, domain) == 0)
+					{
+						tunnel->ipv4.dns_suffix_was_there = 1;
+						log_debug("dns_suffix already present in /etc/resolv.conf.\n");
+					}
+				}
+			}
+
+			if (tunnel->ipv4.dns_suffix_was_there == 0)
+				log_debug("Adding \"%s\", to /etc/resolv.conf.\n", domain);
+
+			rewind(file);
+			if (fread(buffer, stat.st_size, 1, file) != 1)
+			{
+				log_warn("Could not read /etc/resolv.conf.\n");
+				goto err_free;
+			}
+
+			buffer[stat.st_size] = '\0';
+
+			rewind(file);
+#if HAVE_RESOLVCONF
 		}
-
-		if (tunnel->ipv4.dns_suffix_was_there == 0)
-			log_debug("Adding \"%s\", to /etc/resolv.conf.\n", dns_suffix);
-
-		rewind(file);
-		if (fread(buffer, stat.st_size, 1, file) != 1)
-		{
-			log_warn("Could not read /etc/resolv.conf.\n");
-			goto err_free;
-		}
-
-		buffer[stat.st_size] = '\0';
-
-		rewind(file);
-#if HAVE_RESOLVCONF || HAVE_SYSTEMD_RESOLVE
-	}
-#endif
-
-#if HAVE_SYSTEMD_RESOLVE
-	if (use_systemd_resolve == 0)
-	{
 #endif
 		if (tunnel->ipv4.ns1_was_there == 0)
 		{
@@ -1425,52 +1408,48 @@ int ipv4_add_nameservers_to_resolv_conf(struct tunnel *tunnel)
 		}
 		if (tunnel->ipv4.dns_suffix_was_there == 0)
 		{
-			strcat(dns_suffix, "\n");
-			fputs(dns_suffix, file);
+			domain = realloc(domain, strlen(domain) + 1);
+			strcat(domain, "\n");
+			fputs(domain, file);
 		}
+#if HAVE_RESOLVCONF
+		if (use_resolvconf == 0)
+#endif
+			fwrite(buffer, stat.st_size, 1, file);
+
+		ret = 0;
 #if HAVE_SYSTEMD_RESOLVE
 	}
-	else
-	{
-		int systemd_resolve_call_len;
-		char *systemd_resolve_call;
-		systemd_resolve_call_len = strlen(SYSTEMD_RESOLV_PATH) + 10 + strlen(tunnel->ppp_iface) + strlen(ns_value) + strlen(dns_suffix_value);
-		systemd_resolve_call = malloc(systemd_resolve_call_len);
-		snprintf(systemd_resolve_call, systemd_resolve_call_len, "%s -i %s %s %s", SYSTEMD_RESOLV_PATH, tunnel->ppp_iface, ns_value, dns_suffix_value);
-		log_debug("command executed %s \n", systemd_resolve_call);
-		ret = system(systemd_resolve_call);
-		free(systemd_resolve_call);
-		if (ret == -1)
-			goto err_free;
-	}
 #endif
-#if HAVE_RESOLVCONF || HAVE_SYSTEMD_RESOLVE
-	if (use_resolvconf == 0 && use_systemd_resolve == 0)
-#endif
-		fwrite(buffer, stat.st_size, 1, file);
-
-	ret = 0;
 
 err_free:
 	free(buffer);
+	free(domain);
+	free_custom_string_array(domain_array);
 err_close:
-#if HAVE_RESOLVCONF || HAVE_SYSTEMD_RESOLVE
-	if (use_resolvconf == 0 && use_systemd_resolve == 0)
+#if HAVE_SYSTEMD_RESOLVE
+	if (use_systemd_resolve == 0)
 	{
 #endif
-		if (fclose(file))
-			log_warn("Could not close /etc/resolv.conf: %s\n",
-					 strerror(errno));
-#if HAVE_RESOLVCONF || HAVE_SYSTEMD_RESOLVE
-	}
-	else if (use_systemd_resolve == 0)
-	{
-		if (pclose(file) == -1)
-			log_warn("Could not close resolvconf pipe: %s\n",
-					 strerror(errno));
+#if HAVE_RESOLVCONF
+		if (use_resolvconf == 0)
+		{
+#endif
+			if (fclose(file))
+				log_warn("Could not close /etc/resolv.conf: %s\n",
+						 strerror(errno));
+#if HAVE_RESOLVCONF
+		}
+		else
+		{
+			if (pclose(file) == -1)
+				log_warn("Could not close resolvconf pipe: %s\n",
+						 strerror(errno));
+		}
+#endif
+#if HAVE_SYSTEMD_RESOLVE
 	}
 #endif
-
 	return ret;
 }
 
@@ -1482,9 +1461,8 @@ int ipv4_del_nameservers_from_resolv_conf(struct tunnel *tunnel)
 #define NS_SIZE ARRAY_SIZE("nameserver xxx.xxx.xxx.xxx")
 	char ns1[NS_SIZE], ns2[NS_SIZE];
 #undef NS_SIZE
-#define DNS_SUFFIX_SIZE (ARRAY_SIZE("search ") + MAX_DOMAIN_LENGTH)
-	char dns_suffix[DNS_SUFFIX_SIZE];
-#undef DNS_SUFFIX_SIZE
+	char *domain = NULL;
+	char **domain_array = NULL;
 	char *buffer = NULL;
 	char *saveptr = NULL;
 
@@ -1494,10 +1472,10 @@ int ipv4_del_nameservers_from_resolv_conf(struct tunnel *tunnel)
 		int systemd_resolv_call_len;
 		char *systemd_resolv_call;
 
-		systemd_resolv_call_len = strlen(SYSTEMD_RESOLV_PATH) + strlen(tunnel->ppp_iface) + 20;
+		systemd_resolv_call_len = strlen(SYSTEMD_RESOLV_PATH) + strlen(tunnel->ppp_iface) + 9;
 		systemd_resolv_call = malloc(systemd_resolv_call_len);
-		snprintf(systemd_resolv_call, systemd_resolv_call_len, "%s -i %s --revert", SYSTEMD_RESOLV_PATH, tunnel->ppp_iface);
-		log_debug("command executed %s \n", systemd_resolv_call);
+		snprintf(systemd_resolv_call, systemd_resolv_call_len, "%s revert %s", SYSTEMD_RESOLV_PATH, tunnel->ppp_iface);
+		log_info("command executed %s \n", systemd_resolv_call);
 		ret = system(systemd_resolv_call);
 		free(systemd_resolv_call);
 		if (ret == -1)
@@ -1579,11 +1557,19 @@ int ipv4_del_nameservers_from_resolv_conf(struct tunnel *tunnel)
 		strcpy(ns2, "nameserver ");
 		strncat(ns2, inet_ntoa(tunnel->ipv4.ns2_addr), 15);
 	}
-	dns_suffix[0] = '\0';
-	if (tunnel->ipv4.dns_suffix != NULL && tunnel->ipv4.dns_suffix[0] != '\0')
+	if (tunnel->config->append_ns_search != NULL)
 	{
-		strcpy(dns_suffix, "search ");
-		strncat(dns_suffix, tunnel->ipv4.dns_suffix, MAX_DOMAIN_LENGTH);
+		domain_array = merge_custom_string_array(NULL, tunnel->config->append_ns_search);
+	}
+	if (tunnel->ipv4.dns_suffix != NULL)
+	{
+		char **domain_array_from_tunnel = string_split(tunnel->ipv4.dns_suffix, ";");
+		domain_array = merge_custom_string_array(domain_array, domain_array_from_tunnel);
+		domain = string_join(domain_array, " ");
+		domain = (char *)realloc(domain, (strlen(domain)+8)*sizeof(char));
+		string_prepend(domain, "search ");
+		log_debug("domain calculated %s", domain);
+		free_custom_string_array(domain_array_from_tunnel);
 	}
 
 	file = freopen("/etc/resolv.conf", "w", file);
@@ -1606,9 +1592,9 @@ int ipv4_del_nameservers_from_resolv_conf(struct tunnel *tunnel)
 		{
 			log_debug("Deleting \"%s\" from /etc/resolv.conf.\n", ns2);
 		}
-		else if (dns_suffix[0] != '\0' && strcmp(line, dns_suffix) == 0 && (tunnel->ipv4.dns_suffix_was_there == 0))
+		else if (domain !=NULL && strcmp(line, domain) == 0 && (tunnel->ipv4.dns_suffix_was_there == 0))
 		{
-			log_debug("Deleting \"%s\" from /etc/resolv.conf.\n", dns_suffix);
+			log_debug("Deleting \"%s\" from /etc/resolv.conf.\n", domain);
 		}
 		else
 		{
@@ -1621,6 +1607,8 @@ int ipv4_del_nameservers_from_resolv_conf(struct tunnel *tunnel)
 
 err_free:
 	free(buffer);
+	free(domain);
+	free_custom_string_array(domain_array);
 err_close:
 	if (file && fclose(file))
 		log_warn("Could not close /etc/resolv.conf (%s).\n",

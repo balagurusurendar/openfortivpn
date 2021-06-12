@@ -346,7 +346,7 @@ AS_IF([test "x$NETSTAT_PATH" != "x"], [
 # use resolvconf if present
 AC_PATH_PROG(RESOLVCONF_PATH, [resolvconf], [DISABLED], "$PATH:/sbin:/usr/sbin")
 
-AC_PATH_PROG(SYSTEMD_RESOLV_PATH, [systemd-resolve], [DISABLED], "$PATH:/sbin:/usr/sbin")
+AC_PATH_PROG(SYSTEMD_RESOLV_PATH, [resolvectl], [DISABLED], "$PATH:/sbin:/usr/sbin")
 
 # allow override at configure time
 AC_ARG_WITH([resolvconf],
@@ -359,7 +359,7 @@ AC_ARG_WITH([resolvconf],
 )
 
 # allow override at configure time
-AC_ARG_WITH([systemd-resolve],
+AC_ARG_WITH([resolvectl],
 	AS_HELP_STRING([--with-systemd-resolve],
 		       [Set the path to the systemd resolve executable. \
 			Set this to "DISABLED" to fully disable systemd resolve support. \
@@ -401,7 +401,7 @@ AC_ARG_ENABLE([resolvconf],
 			disabled if not explicitly enabled at runtime.]))
 
 # the default for the --use-systemd-resolve runtime command line option
-AC_ARG_ENABLE([systemd-resolve],
+AC_ARG_ENABLE([resolvectl],
 	AS_HELP_STRING([--enable-systemd-resolve],
 		       [Enable usage of systemd-resolve at runtime by default. \
 			Use --disable-systemd-resolve for the opposite, note that \
