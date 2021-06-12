@@ -185,7 +185,7 @@ char **parse_append_ns_search(char *ns_search)
 	char **ns_search_array = NULL;
 	if(strstr(ns_search, ";")!=NULL){
 		ns_search_array = string_split(ns_search, ";");
-	}else if (strstr(ns_search, " ")!=NULL)
+	}else if (strstr(ns_search, ",")!=NULL)
 	{
 		ns_search_array = string_split(ns_search, ",");
 	}else{
